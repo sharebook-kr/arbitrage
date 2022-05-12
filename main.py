@@ -49,9 +49,10 @@ class UpbitWS(QThread):
 class MyWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setGeometry(200, 200, 700, 700)
+        self.setGeometry(200, 200, 650, 800)
         self.setWindowTitle("Arbitrage Bot v1.0")
 
+        self.running = False
         self.korbit_started = False
         self.korbit_ask0_price = 0
         self.korbit_ask1_price = 0
@@ -73,10 +74,20 @@ class MyWindow(QMainWindow):
 
         widget = QWidget()
         layout = QVBoxLayout(widget)
+
         self.hbox = QHBoxLayout()
         self.plain_text = QPlainTextEdit()
+        self.hbox2 = QHBoxLayout()
+        self.btn_start = QPushButton("Start")
+        self.btn_start.clicked.connect(self.btn_start_clicked)
+        self.btn_stop = QPushButton("Stop")
+        self.btn_stop.clicked.connect(self.btn_stop_clicked)
+        self.hbox2.addWidget(self.btn_start)
+        self.hbox2.addWidget(self.btn_stop)
+
         layout.addLayout(self.hbox)
         layout.addWidget(self.plain_text)
+        layout.addLayout(self.hbox2)
 
         self.left_vbox = QVBoxLayout()
         self.right_vbox = QVBoxLayout()
@@ -97,6 +108,12 @@ class MyWindow(QMainWindow):
         self.right_vbox.addWidget(self.table_widget2)
 
         self.setCentralWidget(widget)
+
+    def btn_start_clicked(self):
+        self.running = True
+
+    def btn_stop_clicked(self):
+        self.running = False
 
     def add_table_widget(self):
         # korbit
@@ -184,8 +201,8 @@ class MyWindow(QMainWindow):
             # 코빗의 지정가 매수가격(매도 1호가-0.1) < 업비트의 시장가 매도가격(매수 1호가)
             korbit_buy_hoga = self.korbit_ask0_price - 0.1
             if korbit_buy_hoga < self.upbit_bid0_price and korbit_buy_hoga != self.korbit_bid0_price:
-                profit = self.upbit_bid0_price - korbit_buy_hoga
                 quantity = 200
+                profit = (self.upbit_bid0_price - korbit_buy_hoga) * quantity
 
                 # 업비트는 시장가 매도
                 #upbit.sell_market_order("KRW-BTC", quantity)
@@ -225,7 +242,8 @@ class MyWindow(QMainWindow):
             self.upbit_bid1_price = float(orderbook1["bid_price"])
             self.upbit_bid1_quantity = float(orderbook1["bid_size"])
 
-            self.run()
+            if self.running:
+                self.run()
 
             # ask
             for i in range(5):
