@@ -39,15 +39,17 @@ class BalanceWorker(QThread):
 
 
 class OrderWorker(QThread):
+    send_msg = pyqtSignal(str)
+
     def __init__(self, main):
         super().__init__()
         self.main = main
 
     def run(self):
         while True:
-            if self.main.running and self.main.korbit_started and self.main.upbit_started and self.main.balance_started:
+            if self.main.korbit_started and self.main.upbit_started and self.main.balance_started:
                 self.order()
-            time.sleep(1)
+            time.sleep(0.2)
 
     def order(self):
         # 코빗이 싼 경우
@@ -55,43 +57,46 @@ class OrderWorker(QThread):
         korbit_buy_hoga = self.main.korbit_ask0_price - 0.1
         if korbit_buy_hoga < self.main.upbit_bid0_price and korbit_buy_hoga != self.main.korbit_bid0_price:
             quantity = 20
-            profit = (self.main.upbit_bid0_price - korbit_buy_hoga) * quantity
+            spread = (self.main.upbit_bid0_price - korbit_buy_hoga)
+            profit = spread * quantity
 
-            # 업비트는 시장가 매도
-            upbit.sell_market_order("KRW-XRP", quantity)
+            if self.main.running:
+                # 업비트는 시장가 매도
+                upbit.sell_market_order("KRW-XRP", quantity)
 
-            # 코빗은 지정가 매수
-            korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
+                # 코빗은 지정가 매수
+                korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
 
-            text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} / 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
-            self.main.plain_text.appendPlainText(text)
+            text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 스프레드 {spread:.1f}"
+            self.send_msg.emit(text)
 
             # 코빗 체결 대기
             while len(korbit.get_open_orders("XRP")):
                 time.sleep(0.5)
-                self.main.plain_text.appendPlainText("코빗 체결 대기 중 ...")
-
+                self.send_msg.emit("코빗 체결 대기 중 ...")
 
         # 업비트가 싼 경우
         # 업비트의 시장가 매수가격(매도 1호가) < 코빗의 지정가 매도가격(매수 1호가+0.1)
         korbit_sell_hoga = self.main.korbit_bid0_price + 0.1
         if self.main.upbit_ask0_price < korbit_sell_hoga:
             quantity = 20
-            profit = (korbit_sell_hoga - self.main.upbit_ask0_price) * quantity
+            spread = (korbit_sell_hoga - self.main.upbit_ask0_price)
+            profit = spread * quantity
 
-            # 업비트는 시장가 매수
-            upbit.buy_market_order("KRW-XRP", quantity)
+            if self.main.running:
+                # 업비트는 시장가 매수
+                upbit.buy_market_order("KRW-XRP", quantity)
 
-            # 코빗은 지정가 매도
-            korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
+                # 코빗은 지정가 매도
+                korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
 
-            text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} / 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
-            self.main.plain_text.appendPlainText(text)
+            text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 스프레드 {spread:.1f}"
+            self.send_msg.emit(text)
 
             # 코빗 체결 대기
             while len(korbit.get_open_orders("XRP")):
                 time.sleep(0.5)
-                self.main.plain_text.appendPlainText("코빗 체결 대기 중 ...")
+                self.send_msg.emit("코빗 체결 대기 중 ...")
 
 
 class KorbitWS(QThread):
@@ -196,7 +201,12 @@ class MyWindow(QMainWindow):
         self.balance_worker.start()
 
         self.order_worker = OrderWorker(self)
+        self.order_worker.send_msg.connect(self.update_plaintext)
         self.order_worker.start()
+
+    @pyqtSlot(str)
+    def update_plaintext(self, text):
+        self.plain_text.appendPlainText(text)
 
     @pyqtSlot(dict)
     def update_balance(self, data):
