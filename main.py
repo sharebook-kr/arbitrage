@@ -55,10 +55,13 @@ class OrderWorker(QThread):
         # 코빗이 싼 경우
         # 코빗의 지정가 매수가격(매도 1호가-0.1) < 업비트의 시장가 매도가격(매수 1호가)
         korbit_buy_hoga = self.main.korbit_ask0_price - 0.1
-        if korbit_buy_hoga < self.main.upbit_bid0_price and korbit_buy_hoga != self.main.korbit_bid0_price:
+        upbit_sell_hoga = self.main.upbit_bid0_price
+        upbit_trading_fee = upbit_sell_hoga * 0.05 * 0.01
+
+        # 코빗 지정가 매수 금액이 매수 1호가랑 같지 않아야 함 (시장가로 체결되기 때문)
+        if korbit_buy_hoga < upbit_sell_hoga and korbit_buy_hoga != self.main.korbit_bid0_price:
             quantity = 20
-            spread = (self.main.upbit_bid0_price - korbit_buy_hoga)
-            profit = spread * quantity
+            profit = upbit_sell_hoga - korbit_buy_hoga - upbit_trading_fee
 
             if self.main.running:
                 # 업비트는 시장가 매도
@@ -67,7 +70,7 @@ class OrderWorker(QThread):
                 # 코빗은 지정가 매수
                 korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
 
-            text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 스프레드 {spread:.1f}"
+            text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             self.send_msg.emit(text)
 
             # 코빗 체결 대기
@@ -78,10 +81,13 @@ class OrderWorker(QThread):
         # 업비트가 싼 경우
         # 업비트의 시장가 매수가격(매도 1호가) < 코빗의 지정가 매도가격(매수 1호가+0.1)
         korbit_sell_hoga = self.main.korbit_bid0_price + 0.1
-        if self.main.upbit_ask0_price < korbit_sell_hoga:
+        upbit_buy_hoga = self.main.upbit_ask0_price
+        upbit_trading_fee = upbit_buy_hoga * 0.05 * 0.01
+
+        # 코빗 지정가 매도 금액이 매도 1호가랑 같지 않아야 함 (시장가로 체결되기 때문)
+        if upbit_buy_hoga < korbit_sell_hoga and korbit_sell_hoga != self.main.korbit_ask0_price:
             quantity = 20
-            spread = (korbit_sell_hoga - self.main.upbit_ask0_price)
-            profit = spread * quantity
+            profit = korbit_sell_hoga - upbit_buy_hoga - upbit_trading_fee
 
             if self.main.running:
                 # 업비트는 시장가 매수
@@ -90,7 +96,7 @@ class OrderWorker(QThread):
                 # 코빗은 지정가 매도
                 korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
 
-            text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 스프레드 {spread:.1f}"
+            text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             self.send_msg.emit(text)
 
             # 코빗 체결 대기
