@@ -63,20 +63,19 @@ class OrderWorker(QThread):
             quantity = 20
             profit = upbit_sell_hoga - korbit_buy_hoga - upbit_trading_fee
 
-            if self.main.running:
+            if self.main.running and profit >= self.main.min_profit:
                 # 업비트는 시장가 매도
                 upbit.sell_market_order("KRW-XRP", quantity)
 
                 # 코빗은 지정가 매수
                 korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
+                text = f"(실매매) 코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
 
-            text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+                # 코빗 체결 대기
+                self.wait_korbit_close_order()
+            else:
+                text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             self.send_msg.emit(text)
-
-            # 코빗 체결 대기
-            while len(korbit.get_open_orders("XRP")):
-                time.sleep(0.5)
-                self.send_msg.emit("코빗 체결 대기 중 ...")
 
         # 업비트가 싼 경우
         # 업비트의 시장가 매수가격(매도 1호가) < 코빗의 지정가 매도가격(매수 1호가+0.1)
@@ -89,20 +88,28 @@ class OrderWorker(QThread):
             quantity = 20
             profit = korbit_sell_hoga - upbit_buy_hoga - upbit_trading_fee
 
-            if self.main.running:
+            if self.main.running and profit >= self.main.min_profit:
                 # 업비트는 시장가 매수
                 upbit.buy_market_order("KRW-XRP", quantity)
 
                 # 코빗은 지정가 매도
                 korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
+                text = f"(실매매) 코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
 
-            text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+                # 코빗 체결 대기
+                self.wait_korbit_close_order()
+            else:
+                text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+
             self.send_msg.emit(text)
 
-            # 코빗 체결 대기
+    def wait_korbit_close_order(self):
+        try:
             while len(korbit.get_open_orders("XRP")):
                 time.sleep(0.5)
-                self.send_msg.emit("코빗 체결 대기 중 ...")
+                self.send_msg.emit("(실매매) 코빗 체결 대기 중 ...")
+        except:
+            pass
 
 
 class KorbitWS(QThread):
@@ -141,6 +148,7 @@ class MyWindow(QMainWindow):
         self.korbit_started = False
         self.upbit_started = False
         self.balance_started = False
+        self.min_profit = 4
 
         self.korbit_xrp_balance = 0
         self.korbit_krw_balance = 0
@@ -178,28 +186,44 @@ class MyWindow(QMainWindow):
 
         self.plain_text = QPlainTextEdit()
 
-        self.btn_start = QPushButton("Start")
+        self.btn_start = QPushButton("재정거래 시작")
         self.btn_start.clicked.connect(self.btn_start_clicked)
-        self.btn_stop = QPushButton("Stop")
+        self.btn_stop = QPushButton("재정거래 정지")
         self.btn_stop.clicked.connect(self.btn_stop_clicked)
 
-        layout.addWidget(label1, 0, 0)
-        layout.addWidget(label2, 0, 1)
-        layout.addWidget(self.tw_korbit, 1, 0)
-        layout.addWidget(self.tw_upbit , 1, 1)
-        layout.addWidget(self.table_widget1, 2, 0)
-        layout.addWidget(self.table_widget2, 2, 1)
-        layout.addWidget(self.plain_text, 3, 0, 1, 2)
-        layout.addWidget(self.btn_start, 4, 0)
-        layout.addWidget(self.btn_stop, 4, 1)
+        hbox = QHBoxLayout()
+        label = QLabel("최소 차익 ")
+        self.lineedit = QLineEdit(str(self.min_profit))
+        apply_btn = QPushButton("적용하기")
+        apply_btn.clicked.connect(self.update_min_profit)
+        hbox.addWidget(label)
+        hbox.addWidget(self.lineedit)
+        hbox.addWidget(apply_btn)
+
+        layout.addLayout(hbox, 0, 0)
+        layout.addWidget(label1, 1, 0)
+        layout.addWidget(label2, 1, 1)
+        layout.addWidget(self.tw_korbit, 2, 0)
+        layout.addWidget(self.tw_upbit , 2, 1)
+        layout.addWidget(self.table_widget1, 3, 0)
+        layout.addWidget(self.table_widget2, 3, 1)
+        layout.addWidget(self.plain_text, 4, 0, 1, 2)
+        layout.addWidget(self.btn_start, 5, 0)
+        layout.addWidget(self.btn_stop, 5, 1)
 
         layout.setRowStretch(0, 0)
-        layout.setRowStretch(1, 1)
-        layout.setRowStretch(2, 3)
-        layout.setRowStretch(3, 2)
-        layout.setRowStretch(4, 1)
+        layout.setRowStretch(1, 0)
+        layout.setRowStretch(2, 1)
+        layout.setRowStretch(3, 3)
+        layout.setRowStretch(4, 2)
+        layout.setRowStretch(5, 1)
 
         self.setCentralWidget(widget)
+
+    def update_min_profit(self):
+        price = float(self.lineedit.text())
+        self.min_profit = price
+        self.plain_text.appendPlainText(f"최소 차익이 {price} 원이 적용되었습니다.")
 
     def create_threads(self):
         self.balance_worker = BalanceWorker()
