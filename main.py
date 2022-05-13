@@ -1,23 +1,97 @@
-from re import I
-from tkinter import W
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import Qt
 import sys
 import pykorbit
 import pyupbit
+import time
 
-#with open("korbit.key") as f:
-#    lines = f.readlines()
-#    key = lines[0].strip()
-#    secret = lines[1].strip()
-#korbit = pykorbit.Korbit(key, secret)
-#
-#with open("upbit.key") as f:
-#    lines = f.readlines()
-#    access = lines[0].strip()
-#    secret = lines[1].strip()
-#upbit = pyupbit.Upbit(access, secret)
+with open("korbit.key") as f:
+    lines = f.readlines()
+    key = lines[0].strip()
+    secret = lines[1].strip()
+korbit = pykorbit.Korbit(key, secret)
+
+with open("upbit.key") as f:
+    lines = f.readlines()
+    access = lines[0].strip()
+    secret = lines[1].strip()
+upbit = pyupbit.Upbit(access, secret)
+
+class BalanceWorker(QThread):
+    finished = pyqtSignal(dict)
+
+    def run(self):
+        while True:
+            balances = korbit.get_balances()
+            krw = balances['krw']
+            xrp = balances['xrp']
+
+            upbit_krw = upbit.get_balance(ticker="KRW", verbose=True)
+            upbit_xrp = upbit.get_balance(ticker="XRP", verbose=True)
+
+            data = {
+                'korbit': [krw, xrp],
+                'upbit': [upbit_krw, upbit_xrp]
+            }
+            self.finished.emit(data)
+            time.sleep(1)
+
+
+class OrderWorker(QThread):
+    def __init__(self, main):
+        super().__init__()
+        self.main = main
+
+    def run(self):
+        while True:
+            if self.main.running and self.main.korbit_started and self.main.upbit_started and self.main.balance_started:
+                self.order()
+            time.sleep(1)
+
+    def order(self):
+        # 코빗이 싼 경우
+        # 코빗의 지정가 매수가격(매도 1호가-0.1) < 업비트의 시장가 매도가격(매수 1호가)
+        korbit_buy_hoga = self.main.korbit_ask0_price - 0.1
+        if korbit_buy_hoga < self.main.upbit_bid0_price and korbit_buy_hoga != self.main.korbit_bid0_price:
+            quantity = 20
+            profit = (self.main.upbit_bid0_price - korbit_buy_hoga) * quantity
+
+            # 업비트는 시장가 매도
+            upbit.sell_market_order("KRW-XRP", quantity)
+
+            # 코빗은 지정가 매수
+            korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
+
+            text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} / 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+            self.main.plain_text.appendPlainText(text)
+
+            # 코빗 체결 대기
+            while len(korbit.get_open_orders("XRP")):
+                time.sleep(0.5)
+                self.main.plain_text.appendPlainText("코빗 체결 대기 중 ...")
+
+
+        # 업비트가 싼 경우
+        # 업비트의 시장가 매수가격(매도 1호가) < 코빗의 지정가 매도가격(매수 1호가+0.1)
+        korbit_sell_hoga = self.main.korbit_bid0_price + 0.1
+        if self.main.upbit_ask0_price < korbit_sell_hoga:
+            quantity = 20
+            profit = (korbit_sell_hoga - self.main.upbit_ask0_price) * quantity
+
+            # 업비트는 시장가 매수
+            upbit.buy_market_order("KRW-XRP", quantity)
+
+            # 코빗은 지정가 매도
+            korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
+
+            text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} / 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+            self.main.plain_text.appendPlainText(text)
+
+            # 코빗 체결 대기
+            while len(korbit.get_open_orders("XRP")):
+                time.sleep(0.5)
+                self.main.plain_text.appendPlainText("코빗 체결 대기 중 ...")
 
 
 class KorbitWS(QThread):
@@ -54,6 +128,14 @@ class MyWindow(QMainWindow):
 
         self.running = False
         self.korbit_started = False
+        self.upbit_started = False
+        self.balance_started = False
+
+        self.korbit_xrp_balance = 0
+        self.korbit_krw_balance = 0
+        self.upbit_xrp_balance = 0
+        self.upbit_krw_balance = 0
+
         self.korbit_ask0_price = 0
         self.korbit_ask1_price = 0
         self.korbit_ask0_quantity = 0
@@ -73,41 +155,98 @@ class MyWindow(QMainWindow):
         self.upbit_bid1_quantity = 0
 
         widget = QWidget()
-        layout = QVBoxLayout(widget)
+        layout = QGridLayout(widget)
+        layout.setSpacing(10)
 
-        self.hbox = QHBoxLayout()
+        self.add_table_widget()
+        self.create_ws_threads()
+        self.create_threads()
+
+        label1 = QLabel("코빗 (Maker: -0.05%, Taker: 0.20%)")
+        label2 = QLabel("업비트 (Maker: 0.05%, Taker: 0.05%)")
+
         self.plain_text = QPlainTextEdit()
-        self.hbox2 = QHBoxLayout()
+
         self.btn_start = QPushButton("Start")
         self.btn_start.clicked.connect(self.btn_start_clicked)
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.clicked.connect(self.btn_stop_clicked)
-        self.hbox2.addWidget(self.btn_start)
-        self.hbox2.addWidget(self.btn_stop)
 
-        layout.addLayout(self.hbox)
-        layout.addWidget(self.plain_text)
-        layout.addLayout(self.hbox2)
+        layout.addWidget(label1, 0, 0)
+        layout.addWidget(label2, 0, 1)
+        layout.addWidget(self.tw_korbit, 1, 0)
+        layout.addWidget(self.tw_upbit , 1, 1)
+        layout.addWidget(self.table_widget1, 2, 0)
+        layout.addWidget(self.table_widget2, 2, 1)
+        layout.addWidget(self.plain_text, 3, 0, 1, 2)
+        layout.addWidget(self.btn_start, 4, 0)
+        layout.addWidget(self.btn_stop, 4, 1)
 
-        self.left_vbox = QVBoxLayout()
-        self.right_vbox = QVBoxLayout()
-        self.hbox.addLayout(self.left_vbox)
-        self.hbox.addLayout(self.right_vbox)
-
-        self.add_table_widget()
-        self.create_ws_threads()
-
-        # left vbox
-        label = QLabel("코빗 (Maker: -0.05%, Taker: 0.25%)")
-        self.left_vbox.addWidget(label)
-        self.left_vbox.addWidget(self.table_widget1)
-
-        # right vbox
-        label = QLabel("업비트 (Maker: 0.05%, Taker: 0.05%)")
-        self.right_vbox.addWidget(label)
-        self.right_vbox.addWidget(self.table_widget2)
+        layout.setRowStretch(0, 0)
+        layout.setRowStretch(1, 1)
+        layout.setRowStretch(2, 3)
+        layout.setRowStretch(3, 2)
+        layout.setRowStretch(4, 1)
 
         self.setCentralWidget(widget)
+
+    def create_threads(self):
+        self.balance_worker = BalanceWorker()
+        self.balance_worker.finished.connect(self.update_balance)
+        self.balance_worker.start()
+
+        self.order_worker = OrderWorker(self)
+        self.order_worker.start()
+
+    @pyqtSlot(dict)
+    def update_balance(self, data):
+        # korbit
+        korbit_balance = data.get('korbit')
+        krw_availalbe = korbit_balance[0]['available']
+        xrp_availalbe = korbit_balance[1]['available']
+
+        self.korbit_krw_balance = float(krw_availalbe)
+        self.korbit_xrp_balance = float(xrp_availalbe)
+
+        item = QTableWidgetItem("KRW")
+        item.setTextAlignment(int(Qt.AlignCenter|Qt.AlignVCenter))
+        self.tw_korbit.setItem(0, 0, item)
+
+        item = QTableWidgetItem(krw_availalbe)
+        item.setTextAlignment(int(Qt.AlignRight|Qt.AlignVCenter))
+        self.tw_korbit.setItem(0, 1, item)
+
+        item = QTableWidgetItem("XRP")
+        item.setTextAlignment(int(Qt.AlignCenter|Qt.AlignVCenter))
+        self.tw_korbit.setItem(1, 0, item)
+
+        item = QTableWidgetItem(xrp_availalbe)
+        item.setTextAlignment(int(Qt.AlignRight|Qt.AlignVCenter))
+        self.tw_korbit.setItem(1, 1, item)
+
+        upbit_balance = data.get('upbit')
+        krw_availalbe = upbit_balance[0]['balance']
+        xrp_availalbe = upbit_balance[1]['balance']
+        self.upbit_krw_balance = float(krw_availalbe)
+        self.upbit_xrp_balance = float(xrp_availalbe)
+
+        self.balance_started = True
+
+        item = QTableWidgetItem("KRW")
+        item.setTextAlignment(int(Qt.AlignCenter|Qt.AlignVCenter))
+        self.tw_upbit.setItem(0, 0, item)
+
+        item = QTableWidgetItem(krw_availalbe)
+        item.setTextAlignment(int(Qt.AlignRight|Qt.AlignVCenter))
+        self.tw_upbit.setItem(0, 1, item)
+
+        item = QTableWidgetItem("XRP")
+        item.setTextAlignment(int(Qt.AlignCenter|Qt.AlignVCenter))
+        self.tw_upbit.setItem(1, 0, item)
+
+        item = QTableWidgetItem(xrp_availalbe)
+        item.setTextAlignment(int(Qt.AlignRight|Qt.AlignVCenter))
+        self.tw_upbit.setItem(1, 1, item)
 
     def btn_start_clicked(self):
         self.running = True
@@ -116,25 +255,36 @@ class MyWindow(QMainWindow):
         self.running = False
 
     def add_table_widget(self):
+        labels = ["보유자산", "보유수량"]
         # korbit
+        self.tw_korbit = QTableWidget(self)
+        self.tw_korbit.setColumnCount(2)
+        self.tw_korbit.setColumnWidth(0, 100)
+        self.tw_korbit.setColumnWidth(1, 200)
+        self.tw_korbit.setRowCount(2)
+        self.tw_korbit.verticalHeader().setVisible(False)
+        self.tw_korbit.setHorizontalHeaderLabels(labels)
+
         self.table_widget1 = QTableWidget(self)
         self.table_widget1.setColumnCount(3)
         self.table_widget1.setRowCount(10)
         self.table_widget1.verticalHeader().setVisible(False)
         self.table_widget1.horizontalHeader().setVisible(False)
-        #self.table_widget1.setColumnWidth(0, int(self.table_widget1.width() * 0.4))
-        #self.table_widget1.setColumnWidth(1, int(self.table_widget1.width() * 0.2))
-        #self.table_widget1.setColumnWidth(2, int(self.table_widget1.width() * 0.4))
 
         # upbit
+        self.tw_upbit = QTableWidget(self)
+        self.tw_upbit.setColumnCount(2)
+        self.tw_upbit.setColumnWidth(0, 100)
+        self.tw_upbit.setColumnWidth(1, 200)
+        self.tw_upbit.setRowCount(2)
+        self.tw_upbit.verticalHeader().setVisible(False)
+        self.tw_upbit.setHorizontalHeaderLabels(labels)
+
         self.table_widget2 = QTableWidget(self)
         self.table_widget2.setColumnCount(3)
         self.table_widget2.setRowCount(10)
         self.table_widget2.verticalHeader().setVisible(False)
         self.table_widget2.horizontalHeader().setVisible(False)
-        #self.table_widget2.setColumnWidth(0, int(self.table_widget2.width() * 0.4))
-        #self.table_widget2.setColumnWidth(1, int(self.table_widget2.width() * 0.2))
-        #self.table_widget2.setColumnWidth(2, int(self.table_widget2.width() * 0.4))
 
     def create_ws_threads(self):
         self.wsc_upbit = UpbitWS()
@@ -195,35 +345,6 @@ class MyWindow(QMainWindow):
         except Exception as e:
             print(e)
 
-    def run(self):
-        if self.korbit_started:
-            # 코빗이 싼 경우
-            # 코빗의 지정가 매수가격(매도 1호가-0.1) < 업비트의 시장가 매도가격(매수 1호가)
-            korbit_buy_hoga = self.korbit_ask0_price - 0.1
-            if korbit_buy_hoga < self.upbit_bid0_price and korbit_buy_hoga != self.korbit_bid0_price:
-                quantity = 200
-                profit = (self.upbit_bid0_price - korbit_buy_hoga) * quantity
-
-                # 업비트는 시장가 매도
-                #upbit.sell_market_order("KRW-BTC", quantity)
-
-                # 코빗은 지정가 매수
-                #korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
-
-                text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} / 업비트 시장가 매도 {self.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
-                self.plain_text.appendPlainText(text)
-
-
-            # 업비트가 싼 경우
-            # 업비트의 시장가 매수가격(매도 1호가) < 코빗의 지정가 매도가격(매도 1호가+0.1)
-            korbit_sell_hoga = self.korbit_ask0_price + 0.1
-            if self.upbit_ask0_price < korbit_sell_hoga:
-                profit = korbit_sell_hoga - self.upbit_ask0_price
-                self.plain_text.appendPlainText(f"업비트 매수/코빗 매도 | 차익 {profit:.1f}")
-                # 업비트는 시장가 매수
-
-                # 코빗은 지정가 매도
-
 
     @pyqtSlot(dict)
     def pop_upbit(self, data):
@@ -242,8 +363,7 @@ class MyWindow(QMainWindow):
             self.upbit_bid1_price = float(orderbook1["bid_price"])
             self.upbit_bid1_quantity = float(orderbook1["bid_size"])
 
-            if self.running:
-                self.run()
+            self.upbit_started = True
 
             # ask
             for i in range(5):
