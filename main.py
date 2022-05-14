@@ -6,6 +6,8 @@ import pykorbit
 import pyupbit
 import time
 
+ORDER_ELAPSED_LIMIT = 4             # 4초후 미체결 주문 취소
+
 with open("korbit.key") as f:
     lines = f.readlines()
     key = lines[0].strip()
@@ -26,19 +28,22 @@ class BalanceWorker(QThread):
 
     def run(self):
         while True:
-            balances = korbit.get_balances()
-            krw = balances['krw']
-            xrp = balances['xrp']
+            try:
+                balances = korbit.get_balances()
+                krw = balances['krw']
+                xrp = balances['xrp']
 
-            upbit_krw = upbit.get_balance(ticker="KRW", verbose=True)
-            upbit_xrp = upbit.get_balance(ticker="XRP", verbose=True)
+                upbit_krw = upbit.get_balance(ticker="KRW", verbose=True)
+                upbit_xrp = upbit.get_balance(ticker="XRP", verbose=True)
 
-            data = {
-                'korbit': [krw, xrp],
-                'upbit': [upbit_krw, upbit_xrp]
-            }
-            self.finished.emit(data)
-            time.sleep(1)
+                data = {
+                    'korbit': [krw, xrp],
+                    'upbit': [upbit_krw, upbit_xrp]
+                }
+                self.finished.emit(data)
+            except:
+                pass
+            time.sleep(2)
 
 
 class OrderWorker(QThread):
@@ -66,20 +71,33 @@ class OrderWorker(QThread):
         if (korbit_buy_hoga < upbit_sell_hoga and
             korbit_buy_hoga != self.main.korbit_ask0_price):
             quantity = 20
-            profit = upbit_sell_hoga - korbit_buy_hoga - upbit_trading_fee - korbit_trading_fee
+            #profit = upbit_sell_hoga - korbit_buy_hoga - upbit_trading_fee - korbit_trading_fee
+            profit = upbit_sell_hoga - korbit_buy_hoga - upbit_trading_fee
 
             if (self.main.running and profit >= self.main.min_profit and
                 self.main.upbit_xrp_balance >= quantity and
                 self.main.korbit_krw_balance > (korbit_buy_hoga * quantity)):
-                # 업비트는 시장가 매도
-                upbit.sell_market_order("KRW-XRP", quantity)
 
                 # 코빗은 지정가 매수
-                korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
-                text = f"(실매매) 코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+                try:
+                    resp = korbit.buy_limit_order("XRP", korbit_buy_hoga, quantity)
 
-                # 코빗 체결 대기
-                self.wait_korbit_close_order()
+                    # 코빗 체결 대기 또는 취소
+                    order_id, order_status, _ = resp
+                    if order_status == 'success':
+                        order_ret = self.wait_korbit_close_order(order_id)
+
+                        # 주문 취소시 현재 세션 종료
+                        if order_ret == 1:
+                            return
+                    else:
+                        return
+                except:
+                    return
+
+                # 업비트는 시장가 매도
+                upbit.sell_market_order("KRW-XRP", quantity)
+                text = f"(실매매) 코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             else:
                 text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             self.send_msg.emit(text)
@@ -95,30 +113,52 @@ class OrderWorker(QThread):
         if (upbit_buy_hoga < korbit_sell_hoga and
             korbit_sell_hoga != self.main.korbit_bid0_price):
             quantity = 20
-            profit = korbit_sell_hoga - upbit_buy_hoga - upbit_trading_fee - korbit_trading_fee
+            #profit = korbit_sell_hoga - upbit_buy_hoga - upbit_trading_fee - korbit_trading_fee
+            profit = korbit_sell_hoga - upbit_buy_hoga - upbit_trading_fee
 
             if (self.main.running and profit >= self.main.min_profit and
                 self.main.korbit_xrp_balance >= quantity and
                 self.main.upbit_krw_balance > (upbit_buy_hoga * quantity * 1.01)):
-                # 업비트는 시장가 매수
-                upbit.buy_market_order("KRW-XRP", quantity)
 
                 # 코빗은 지정가 매도
-                korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
-                text = f"(실매매) 코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+                try:
+                    resp = korbit.sell_limit_order("XRP", korbit_buy_hoga, quantity)
 
-                # 코빗 체결 대기
-                self.wait_korbit_close_order()
+                    # 코빗 체결 대기 또는 취소
+                    order_id, order_status, _ = resp
+                    if order_status == 'success':
+                        order_ret = self.wait_korbit_close_order(order_id)
+
+                        # 주문 취소시 현재 세션 종료
+                        if order_ret == 1:
+                            return
+                    else:
+                        return
+                except:
+                    return
+
+                # 업비트는 시장가 매수
+                upbit.buy_market_order("KRW-XRP", quantity)
+                text = f"(실매매) 코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             else:
                 text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
 
             self.send_msg.emit(text)
 
-    def wait_korbit_close_order(self):
+    def wait_korbit_close_order(self, order_id):
         try:
+            start_time = time.time()
             while len(korbit.get_open_orders("XRP")):
                 time.sleep(0.5)
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+
+                if (elapsed_time > ORDER_ELAPSED_LIMIT):
+                    korbit.cancel_order("XRP", order_id)
+                    return 1
+
                 self.send_msg.emit("(실매매) 코빗 체결 대기 중 ...")
+            return 0
         except:
             pass
 
