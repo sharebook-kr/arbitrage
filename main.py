@@ -6,7 +6,7 @@ import pykorbit
 import pyupbit
 import time
 
-ORDER_ELAPSED_LIMIT = 4             # 4초후 미체결 주문 취소
+ORDER_ELAPSED_LIMIT = 10             # 10초후 미체결 주문 취소
 
 with open("korbit.key") as f:
     lines = f.readlines()
@@ -59,7 +59,22 @@ class OrderWorker(QThread):
                 self.order()
             time.sleep(0.2)
 
+    def close_open_orders(self):
+        """미체결 주무 모두 취소
+        """
+        try:
+            open_orders = korbit.get_open_orders("XRP")
+            for order in open_orders:
+                order_id = int(order['id'])
+                korbit.cancel_order("XRP", order_id)
+                time.sleep(0.1)
+        except:
+            pass
+
     def order(self):
+        # 이전 거래의 비정상 미체결 주문이 남아있으면 취소
+        self.close_open_orders()
+
         # 코빗이 싼 경우
         # 코빗의 지정가 매수가격(매수 1호가+0.1) < 업비트의 시장가 매도가격(매수 1호가)
         korbit_buy_hoga = self.main.korbit_bid0_price + 0.1
@@ -90,14 +105,17 @@ class OrderWorker(QThread):
                         # 주문 취소시 현재 세션 종료
                         if order_ret == 1:
                             return
+                        else:
+                            # 업비트는 시장가 매도
+                            upbit.sell_market_order("KRW-XRP", quantity)
+                            time.sleep(0.5)
                     else:
                         return
                 except:
+                    self.send_msg.emit("ERROR: 코빗 지정가 매수 에러 발생")
                     return
 
-                # 업비트는 시장가 매도
-                upbit.sell_market_order("KRW-XRP", quantity)
-                text = f"(실매매) 코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+                text = f"(실매매 완료) 코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             else:
                 text = f"코빗 지정가 매수 {korbit_buy_hoga:.1f} | 업비트 시장가 매도 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             self.send_msg.emit(text)
@@ -132,14 +150,15 @@ class OrderWorker(QThread):
                         # 주문 취소시 현재 세션 종료
                         if order_ret == 1:
                             return
+                        else:
+                            # 업비트는 시장가 매수
+                            upbit.buy_market_order("KRW-XRP", quantity)
+                            time.sleep(0.5)
                     else:
                         return
                 except:
                     return
-
-                # 업비트는 시장가 매수
-                upbit.buy_market_order("KRW-XRP", quantity)
-                text = f"(실매매) 코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
+                text = f"(실매매 완료) 코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
             else:
                 text = f"코빗 지정가 매도 {korbit_buy_hoga:.1f} | 업비트 시장가 매수 {self.main.upbit_bid0_price:.1f} | 차익 {profit:.1f}"
 
@@ -154,13 +173,15 @@ class OrderWorker(QThread):
                 elapsed_time = end_time - start_time
 
                 if (elapsed_time > ORDER_ELAPSED_LIMIT):
+                    self.send_msg.emit("(실매매) 코빗 지정가 주문 취소")
                     korbit.cancel_order("XRP", order_id)
                     return 1
 
                 self.send_msg.emit("(실매매) 코빗 체결 대기 중 ...")
             return 0
         except:
-            pass
+            self.send_msg.emit("ERROR: (실매매) 코빗 지정가 주문 취소")
+            return 1
 
 
 class KorbitWS(QThread):
@@ -207,22 +228,14 @@ class MyWindow(QMainWindow):
         self.upbit_krw_balance = 0
 
         self.korbit_ask0_price = 0
-        self.korbit_ask1_price = 0
         self.korbit_ask0_quantity = 0
-        self.korbit_ask1_quantity = 0
         self.korbit_bid0_price = 0
-        self.korbit_bid1_price = 0
         self.korbit_bid0_quantity = 0
-        self.korbit_bid1_quantity = 0
 
         self.upbit_ask0_price = 0
-        self.upbit_ask1_price = 0
         self.upbit_ask0_quantity = 0
-        self.upbit_ask1_quantity = 0
         self.upbit_bid0_price = 0
-        self.upbit_bid1_price = 0
         self.upbit_bid0_quantity = 0
-        self.upbit_bid1_quantity = 0
 
         widget = QWidget()
         layout = QGridLayout(widget)
@@ -392,22 +405,14 @@ class MyWindow(QMainWindow):
 
     def pop_korbit(self, data):
         try:
-            # 1호가, 2호가 데이터 저장
+            # 1호가 데이터 저장
             ask0 = data['data']['asks'][0]
             self.korbit_ask0_price = float(ask0["price"])
             self.korbit_ask0_quantity = float(ask0["amount"])
 
-            ask1 = data['data']['asks'][1]
-            self.korbit_ask1_price = float(ask1["price"])
-            self.korbit_ask1_quantity = float(ask1["amount"])
-
             bid0 = data['data']['bids'][0]
             self.korbit_bid0_price = float(bid0["price"])
             self.korbit_bid0_quantity = float(bid0["amount"])
-
-            bid1 = data['data']['bids'][1]
-            self.korbit_bid1_price = float(bid1["price"])
-            self.korbit_bid1_quantity = float(bid1["amount"])
 
             self.korbit_started = True
 
@@ -444,19 +449,14 @@ class MyWindow(QMainWindow):
     @pyqtSlot(dict)
     def pop_upbit(self, data):
         try:
-            # 1호가, 2호가 데이터 저장
+            # 1호가 데이터 저장
             orderbook0 = data['orderbook_units'][0]
-            orderbook1 = data['orderbook_units'][1]
 
             self.upbit_ask0_price = float(orderbook0["ask_price"])
             self.upbit_ask0_quantity = float(orderbook0["ask_size"])
-            self.upbit_ask1_price = float(orderbook1["ask_price"])
-            self.upbit_ask1_quantity = float(orderbook1["ask_size"])
 
             self.upbit_bid0_price = float(orderbook0["bid_price"])
             self.upbit_bid0_quantity = float(orderbook0["bid_size"])
-            self.upbit_bid1_price = float(orderbook1["bid_price"])
-            self.upbit_bid1_quantity = float(orderbook1["bid_size"])
 
             self.upbit_started = True
 
