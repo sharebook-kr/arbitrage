@@ -220,8 +220,8 @@ class UpbitWS(QThread):
 
 
 class OrderBookTableWidget(QTableWidget):
-    def __init__(self, where):
-        super().__init__(where)
+    def __init__(self):
+        super().__init__()
 
         self.setColumnCount(3)
         self.setRowCount(10)
@@ -239,17 +239,18 @@ class OrderBookTableWidget(QTableWidget):
             d1.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.setItem(i, 1, d1)
 
-            bar = QProgressBar(self)
+            bar = QProgressBar()
             bar.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             bar.setStyleSheet("""
                 QProgressBar {background-color: 0xffffff; border: 1px}
-                QProgressBar::Chunk {background-color: rgba(255, 0, 0, 0.3)}
+                QProgressBar::Chunk {background-color: rgba(0, 0, 255, 0.2)}
             """)
             bar.setInvertedAppearance(True)
             anim = QPropertyAnimation(bar, b"value")
             anim.setDuration(200)
             anim.setStartValue(0)
             self.anims.append(anim)
+
             self.setCellWidget(i, 0, bar)
 
         for i in range(5, 10):
@@ -261,10 +262,10 @@ class OrderBookTableWidget(QTableWidget):
             d2.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.setItem(i, 2, d2)
 
-            bar = QProgressBar(self)
+            bar = QProgressBar()
             bar.setStyleSheet("""
                 QProgressBar {background-color: 0xffffff; border: 1px}
-                QProgressBar::Chunk {background-color: rgba(0, 255, 0, 0.3)}
+                QProgressBar::Chunk {background-color: rgba(255, 0, 0, 0.2)}
             """)
             bar.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.setCellWidget(i, 2, bar)
@@ -292,8 +293,8 @@ class OrderBookTableWidget(QTableWidget):
 
 
 class BalanceTableWidget(QTableWidget):
-    def __init__(self, where):
-        super().__init__(where)
+    def __init__(self):
+        super().__init__()
 
         labels = ["보유자산", "보유수량"]
         self.setColumnCount(2)
@@ -459,12 +460,12 @@ class MyWindow(QMainWindow):
 
     def add_table_widget(self):
         # korbit
-        self.tw_korbit = BalanceTableWidget(self)
-        self.table_widget1 = OrderBookTableWidget(self)
+        self.tw_korbit = BalanceTableWidget()
+        self.table_widget1 = OrderBookTableWidget()
 
         # upbit
-        self.tw_upbit = BalanceTableWidget(self)
-        self.table_widget2 = OrderBookTableWidget(self)
+        self.tw_upbit = BalanceTableWidget()
+        self.table_widget2 = OrderBookTableWidget()
 
     def create_ws_threads(self):
         self.wsc_upbit = UpbitWS()
