@@ -2,7 +2,7 @@ from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTableWidget, QProgressBar,
     QTableWidgetItem, QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QLineEdit, QStatusBar
+    QPushButton, QLineEdit, QStatusBar, QVBoxLayout
 )
 from PyQt5.QtCore import Qt, QPropertyAnimation
 import sys
@@ -239,6 +239,8 @@ class OrderBookTableWidget(QTableWidget):
             d1.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.setItem(i, 1, d1)
 
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
             bar = QProgressBar()
             bar.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             bar.setStyleSheet("""
@@ -246,12 +248,18 @@ class OrderBookTableWidget(QTableWidget):
                 QProgressBar::Chunk {background-color: rgba(0, 0, 255, 0.2)}
             """)
             bar.setInvertedAppearance(True)
+            bar.setFixedHeight(20)
             anim = QPropertyAnimation(bar, b"value")
             anim.setDuration(200)
             anim.setStartValue(0)
             self.anims.append(anim)
 
-            self.setCellWidget(i, 0, bar)
+            layout.addWidget(bar)
+            layout.setAlignment(Qt.AlignVCenter)
+            layout.setContentsMargins(0, 0, 0, 0)
+            widget.setLayout(layout)
+
+            self.setCellWidget(i, 0, widget)
 
         for i in range(5, 10):
             d1 = QTableWidgetItem("")
@@ -262,13 +270,24 @@ class OrderBookTableWidget(QTableWidget):
             d2.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.setItem(i, 2, d2)
 
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+
             bar = QProgressBar()
+            bar.setFixedHeight(20)
             bar.setStyleSheet("""
                 QProgressBar {background-color: 0xffffff; border: 1px}
                 QProgressBar::Chunk {background-color: rgba(255, 0, 0, 0.2)}
             """)
             bar.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.setCellWidget(i, 2, bar)
+
+            layout.addWidget(bar)
+            layout.setAlignment(Qt.AlignVCenter)
+            layout.setContentsMargins(0, 0, 0, 0)
+            widget.setLayout(layout)
+
+            self.setCellWidget(i, 2, widget)
+
             anim = QPropertyAnimation(bar, b"value")
             anim.setDuration(200)
             anim.setStartValue(0)
@@ -283,11 +302,13 @@ class OrderBookTableWidget(QTableWidget):
         item = self.item(i, 1)
         item.setText(f"{price}")
 
-        cw = self.cellWidget(i, value_pos)
-        cw.setRange(0, int(max_value))
-        cw.setFormat(f"{quantity:,.2f}")
+        widget = self.cellWidget(i, value_pos)
+        vbox = widget.findChildren(QVBoxLayout)[0]
+        bar = vbox.itemAt(0).widget()
+        bar.setRange(0, int(max_value))
+        bar.setFormat(f"{quantity:,.2f}")
 
-        self.anims[i].setStartValue(cw.value())
+        self.anims[i].setStartValue(bar.value())
         self.anims[i].setEndValue(int(value))
         self.anims[i].start()
 
