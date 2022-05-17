@@ -73,6 +73,8 @@ class OrderWorker(QThread):
                 order_id = int(order['id'])
                 korbit.cancel_order("XRP", order_id)
                 time.sleep(0.1)
+
+            time.sleep(0.1)
         except:
             pass
 
